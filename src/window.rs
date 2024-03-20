@@ -75,7 +75,6 @@ impl cosmic::Application for Window {
         core: Core,
         flags: Self::Flags,
     ) -> (Self, Command<cosmic::app::Message<Self::Message>>) {
-        dbg!(freedesktop_desktop_entry::default_paths());
         let entry_map = entry_map(entries(), flags.app_list_config.favorites.clone());
         let window = Window {
             core,
