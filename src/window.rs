@@ -31,7 +31,7 @@ pub struct Window {
     config_handler: Option<cosmic_config::Config>,
     active_category: Category,
     timeline: Timeline,
-    entries: Vec<Entry>,
+    entry_map: HashMap<Category, Vec<Entry>>,
 }
 
 #[derive(Clone, Debug)]
@@ -71,15 +71,15 @@ impl cosmic::Application for Window {
         flags: Self::Flags,
     ) -> (Self, Command<cosmic::app::Message<Self::Message>>) {
         let entries = entries();
-        dbg!(&flags.app_list_config);
+        let entry_map = entry_map(entries, flags.app_list_config.clone());
         let window = Window {
             core,
             config: flags.config,
             config_handler: flags.config_handler,
-            entries,
             active_category: Category::Favorites,
             popup: None,
             app_list_config: flags.app_list_config,
+            entry_map,
             timeline: Timeline::new(),
         };
         (window, Command::none())
@@ -183,16 +183,12 @@ impl cosmic::Application for Window {
             let container = widget::container(area).width(Length::Fill);
             left_side = left_side.push(container);
         }
+        let empty_vec = Vec::new();
+        let active_entries = self
+            .entry_map
+            .get(&self.active_category)
+            .unwrap_or(&empty_vec);
 
-        let mut active_entries: Vec<_> = self
-            .entries
-            .iter()
-            .filter(|entry| match &self.active_category {
-                Category::Favorites => self.app_list_config.favorites.contains(&entry.appid),
-                category => entry.categories.contains(category),
-            })
-            .collect();
-        active_entries.sort_by(|a, b| a.name.cmp(&b.name));
         let mut right_side = widget::column::with_capacity(active_entries.len()).width(400);
 
         for entry in active_entries {
@@ -211,6 +207,7 @@ impl cosmic::Application for Window {
         }
         let right_scroll = widget::scrollable(right_side).height(500);
         use unicode_segmentation::UnicodeSegmentation;
+        // todo proper way to uniform width (try spaming more containers?)
         let max_width = ALL_CATEGORIES
             .iter()
             .map(|category| format!("{:?}", category).graphemes(true).count())
@@ -269,11 +266,12 @@ impl cosmic::Application for Window {
         Some(cosmic::applet::style())
     }
 }
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 impl Window {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 struct Entry {
     name: String,
     exec: String,
@@ -281,7 +279,7 @@ struct Entry {
     icon: String,
     appid: String,
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Category {
     Favorites,
     AudioVideo,
@@ -346,9 +344,39 @@ impl Category {
             "Office" => Some(Category::Office),
             "System" => Some(Category::System),
             "Utility" => Some(Category::Utility),
+            "" => None,
             _ => Some(Category::Other),
         }
     }
+}
+
+fn entry_map(
+    mut entries: Vec<Entry>,
+    mut app_list_config: AppListConfig,
+) -> HashMap<Category, Vec<Entry>> {
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut entry_map = HashMap::with_capacity(entries.len());
+    for entry in &entries {
+        let mut categories = entry.categories.clone();
+        categories.sort();
+        categories.dedup();
+        for category in categories {
+            entry_map
+                .entry(category)
+                .or_insert_with(|| Vec::new())
+                .push(entry.clone());
+        }
+    }
+    app_list_config.favorites.sort();
+    for entry in app_list_config.favorites {
+        if let Some(entry) = entries.iter().find(|it| it.appid == entry) {
+            entry_map
+                .entry(Category::Favorites)
+                .or_insert_with(|| Vec::new())
+                .push(entry.clone())
+        }
+    }
+    entry_map
 }
 
 fn entries() -> Vec<Entry> {
