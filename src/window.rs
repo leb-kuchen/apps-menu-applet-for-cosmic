@@ -352,7 +352,7 @@ impl Category {
 
 fn entry_map(
     mut entries: Vec<Entry>,
-    app_list_config: AppListConfig,
+    mut app_list_config: AppListConfig,
 ) -> HashMap<Category, Vec<Entry>> {
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     let mut entry_map = HashMap::with_capacity(entries.len());
@@ -367,6 +367,7 @@ fn entry_map(
                 .push(entry.clone());
         }
     }
+    app_list_config.favorites.sort();
     for entry in app_list_config.favorites {
         if let Some(entry) = entries.iter().find(|it| it.appid == entry) {
             entry_map
