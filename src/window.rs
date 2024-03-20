@@ -1,14 +1,17 @@
 use cosmic::app::Core;
 use cosmic::iced::wayland::popup::{destroy_popup, get_popup};
 use cosmic::iced::window::Id;
-use cosmic::iced::{Command, Limits};
+use cosmic::iced::{self, Command, Limits};
 use cosmic::iced_core::Alignment;
+use cosmic::iced_futures::futures::SinkExt;
 use cosmic::iced_futures::Subscription;
 use cosmic::iced_runtime::core::window;
 use cosmic::iced_style::application;
 use cosmic::widget;
 use cosmic::{Element, Theme};
 use freedesktop_desktop_entry::DesktopEntry;
+use notify::Watcher;
+use tokio::task::spawn_blocking;
 
 use crate::config::{AppListConfig, Config, CONFIG_VERSION};
 use cosmic::cosmic_config;
@@ -43,6 +46,8 @@ pub enum Message {
     Category(Category),
     SpawnExec(String),
     Frame(std::time::Instant),
+    NotifyEvent(notify::Event),
+    CategoryUpdate(Option<HashMap<Category, Vec<Entry>>>),
 }
 
 #[derive(Clone, Debug)]
@@ -70,8 +75,7 @@ impl cosmic::Application for Window {
         core: Core,
         flags: Self::Flags,
     ) -> (Self, Command<cosmic::app::Message<Self::Message>>) {
-        let entries = entries();
-        let entry_map = entry_map(entries, flags.app_list_config.clone());
+        let entry_map = entry_map(entries(), flags.app_list_config.favorites.clone());
         let window = Window {
             core,
             config: flags.config,
@@ -154,6 +158,22 @@ impl cosmic::Application for Window {
             }
             Message::AppListConfg(config) => {
                 self.app_list_config = config;
+            }
+            Message::NotifyEvent(_event) => {
+                let favorites = self.app_list_config.favorites.clone();
+                return Command::perform(
+                    async move {
+                        spawn_blocking(move || entry_map(entries(), favorites))
+                            .await
+                            .ok()
+                    },
+                    |entry_map| cosmic::app::message::app(Message::CategoryUpdate(entry_map)),
+                );
+            }
+            Message::CategoryUpdate(entry_map) => {
+                if let Some(entry_map) = entry_map {
+                    self.entry_map = entry_map;
+                }
             }
         }
         Command::none()
@@ -253,13 +273,48 @@ impl cosmic::Application for Window {
             }
             Message::AppListConfg(update.config)
         });
+        struct WatcherSubscription;
+        let id = std::any::TypeId::of::<WatcherSubscription>();
+        let watcher = iced::subscription::channel(id, 100, |mut output| async move {
+            let mut watcher_res = notify::recommended_watcher(
+                move |event_res: Result<notify::Event, notify::Error>| match event_res {
+                    Ok(event) => {
+                        match &event.kind {
+                            notify::EventKind::Access(_) => return,
+                            _ => {}
+                        }
+                        let event_send = iced::futures::executor::block_on(async {
+                            output.send(Message::NotifyEvent(event)).await
+                        });
+                        match event_send {
+                            Ok(()) => {}
+                            Err(e) => {
+                                eprintln!("error sending notify event for desktop files {e:?} ")
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("failed to watch destkop files {e:?}"),
+                },
+            );
+            match &mut watcher_res {
+                Ok(watcher) => {
+                    for path in freedesktop_desktop_entry::default_paths() {
+                        _ = watcher.watch(&path, notify::RecursiveMode::NonRecursive);
+                    }
+                }
+                Err(_) => {}
+            }
+            loop {
+                tokio::time::sleep(tokio::time::Duration::new(1, 0)).await;
+            }
+        });
 
         let timeline = self
             .timeline
             .as_subscription()
             .map(|(_, now)| Message::Frame(now));
 
-        Subscription::batch(vec![config, app_list_config, timeline])
+        Subscription::batch(vec![config, app_list_config, watcher, timeline])
     }
 
     fn style(&self) -> Option<<Theme as application::StyleSheet>::Style> {
@@ -272,7 +327,7 @@ use std::path::Path;
 impl Window {}
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
-struct Entry {
+pub struct Entry {
     name: String,
     exec: String,
     categories: Vec<Category>,
@@ -350,10 +405,7 @@ impl Category {
     }
 }
 
-fn entry_map(
-    mut entries: Vec<Entry>,
-    mut app_list_config: AppListConfig,
-) -> HashMap<Category, Vec<Entry>> {
+fn entry_map(mut entries: Vec<Entry>, mut favorites: Vec<String>) -> HashMap<Category, Vec<Entry>> {
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     let mut entry_map = HashMap::with_capacity(entries.len());
     for entry in &entries {
@@ -367,8 +419,8 @@ fn entry_map(
                 .push(entry.clone());
         }
     }
-    app_list_config.favorites.sort();
-    for entry in app_list_config.favorites {
+    favorites.sort();
+    for entry in favorites {
         if let Some(entry) = entries.iter().find(|it| it.appid == entry) {
             entry_map
                 .entry(Category::Favorites)
