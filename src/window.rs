@@ -1,4 +1,5 @@
 use cosmic::app::Core;
+use cosmic::cosmic_theme::Spacing;
 use cosmic::iced::wayland::popup::{destroy_popup, get_popup};
 use cosmic::iced::window::Id;
 use cosmic::iced::{self, Command, Limits};
@@ -7,7 +8,7 @@ use cosmic::iced_futures::futures::SinkExt;
 use cosmic::iced_futures::Subscription;
 use cosmic::iced_runtime::core::window;
 use cosmic::iced_style::application;
-use cosmic::widget;
+use cosmic::{widget, Apply};
 use cosmic::{Element, Theme};
 use freedesktop_desktop_entry::DesktopEntry;
 use notify::Watcher;
@@ -138,7 +139,7 @@ impl cosmic::Application for Window {
                             .applet
                             .get_popup_settings(Id::MAIN, new_id, None, None, None);
                     popup_settings.positioner.size_limits = Limits::NONE
-                        .max_width(372.0)
+                        .max_width(500.0)
                         .min_width(300.0)
                         .min_height(200.0)
                         .max_height(1080.0);
@@ -157,7 +158,16 @@ impl cosmic::Application for Window {
                 cosmic::desktop::spawn_desktop_exec(exec, Vec::<(&str, &str)>::new());
             }
             Message::AppListConfg(config) => {
+                let favorites = config.favorites.clone();
                 self.app_list_config = config;
+                return Command::perform(
+                    async move {
+                        spawn_blocking(move || entry_map(entries(), favorites))
+                            .await
+                            .ok()
+                    },
+                    |entry_map| cosmic::app::message::app(Message::CategoryUpdate(entry_map)),
+                );
             }
             Message::NotifyEvent(_event) => {
                 let favorites = self.app_list_config.favorites.clone();
@@ -187,21 +197,43 @@ impl cosmic::Application for Window {
     }
 
     fn view_window(&self, _id: Id) -> Element<Self::Message> {
-        let mut content_list = widget::column::with_capacity(1).padding([8, 8]);
+        #[allow(unused_variables)]
+        let Spacing {
+            space_xxxs,
+            space_xxs,
+            space_xs,
+            space_s,
+            space_l,
+            ..
+        } = self.core.system_theme().cosmic().spacing;
+
+        let mut content_list = widget::column::with_capacity(1).padding([8, 0]);
         let mut rows = widget::row::with_capacity(2);
 
         let mut left_side = widget::column::with_capacity(ALL_CATEGORIES.len());
+
+        // todo proper way to uniform width (try spaming more containers?)
+        let max_width = ALL_CATEGORIES
+            .iter()
+            .map(|category| format!("{:?}", category).graphemes(true).count())
+            .max()
+            .unwrap_or(0) as f32
+            * 10.0;
+
         for category in ALL_CATEGORIES {
-            let txt = widget::text(format!("{category:?}")).width(Length::Fill);
+            let txt = widget::text(format!("{category:?}"))
+                .width(max_width)
+                .apply(widget::container)
+                .padding([0, space_xxxs]);
 
             let btn = widget::button(txt)
                 .on_press(Message::Category(*category))
                 .selected(self.active_category == *category)
                 .style(cosmic::theme::Button::HeaderBar);
+
             let area =
                 mouse_area_copy::MouseArea::new(btn).on_mouse_hover(Message::Category(*category));
-            let container = widget::container(area).width(Length::Fill);
-            left_side = left_side.push(container);
+            left_side = left_side.push(area);
         }
         let empty_vec = Vec::new();
         let active_entries = self
@@ -214,10 +246,11 @@ impl cosmic::Application for Window {
         for entry in active_entries {
             let txt = widget::text(entry.name.clone()).width(Length::Fill);
 
-            let icon = widget::icon::from_name(entry.icon.clone());
+            let icon = widget::icon::from_name(entry.icon.clone()).size(20);
             let row = widget::row::with_capacity(2)
                 .push(icon)
                 .push(txt)
+                .spacing(space_xxs)
                 .align_items(Alignment::Center);
             let btn = widget::button(row)
                 .on_press(Message::SpawnExec(entry.exec.clone()))
@@ -227,17 +260,13 @@ impl cosmic::Application for Window {
         }
         let right_scroll = widget::scrollable(right_side).height(500);
         use unicode_segmentation::UnicodeSegmentation;
-        // todo proper way to uniform width (try spaming more containers?)
-        let max_width = ALL_CATEGORIES
-            .iter()
-            .map(|category| format!("{:?}", category).graphemes(true).count())
-            .max()
-            .unwrap_or(0) as f32
-            * 11.0;
 
-        let left_container = widget::container(left_side).width(Length::Fixed(max_width));
+        let left_container = widget::container(left_side).width(Length::Shrink);
         let right_container = widget::container(right_scroll).width(Length::Fill);
-        rows = rows.push(left_container).push(right_container);
+        rows = rows
+            .push(left_container)
+            .push(right_container)
+            .spacing(space_xs);
         content_list = content_list.push(rows);
 
         self.core.applet.popup_container(content_list).into()
