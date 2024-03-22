@@ -1,3 +1,4 @@
+
 use crate::window::Window;
 
 use config::{AppListConfig, Config, CONFIG_VERSION};

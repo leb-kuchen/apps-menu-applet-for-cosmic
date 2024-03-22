@@ -4,11 +4,19 @@ use serde::{Deserialize, Serialize};
 pub const CONFIG_VERSION: u64 = 1;
 
 #[derive(Clone, CosmicConfigEntry, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Config {}
+pub struct Config {
+    pub skip_empty_categories: bool,
+    pub categories: Vec<String>,
+    pub sort_categories: bool,
+}
 
 impl Default for Config {
     fn default() -> Self {
-        Self {}
+        Self {
+            skip_empty_categories: true,
+            categories: Vec::new(),
+            sort_categories: true,
+        }
     }
 }
 
