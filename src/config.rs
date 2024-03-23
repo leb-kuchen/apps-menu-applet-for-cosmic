@@ -1,3 +1,5 @@
+use std::vec;
+
 use cosmic::cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +16,22 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             skip_empty_categories: true,
-            categories: Vec::new(),
+            categories: vec![
+                "Favorites".into(),
+                "Audio".into(),
+                "AudioVideo".into(),
+                "COSMIC".into(),
+                "Education".into(),
+                "Game".into(),
+                "Graphics".into(),
+                "Network".into(),
+                "Office".into(),
+                "Science".into(),
+                "Settings".into(),
+                "System".into(),
+                "Utility".into(),
+                "Other".into(),
+            ],
             sort_categories: true,
         }
     }

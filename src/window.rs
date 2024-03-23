@@ -87,15 +87,12 @@ impl cosmic::Application for Window {
         if config.sort_categories {
             config.categories.sort_by(|a, b| category_cmp(a, b));
         }
-        let entry_map = entry_map(
-            entries(&config),
-            flags.app_list_config.favorites.clone(),
-            &config,
-        );
+        let favorites = flags.app_list_config.favorites.clone();
+        let entry_map = HashMap::new();
         // dbg!(&config);
         let window = Window {
             core,
-            config,
+            config: config.clone(),
             config_handler: flags.config_handler,
             active_category: "Favorites".into(),
             popup: None,
@@ -103,7 +100,7 @@ impl cosmic::Application for Window {
             entry_map,
             timeline: Timeline::new(),
         };
-        (window, Command::none())
+        (window, update_entry_map(favorites, config))
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -403,12 +400,12 @@ fn entry_map(
     entries.sort_by(|a, b| natural_lexical_cmp(&a.name, &b.name));
     let mut entry_map = HashMap::with_capacity(entries.len());
     for entry in &entries {
-        let mut categories = entry.categories.clone();
+        let mut categories: Vec<_> = entry.categories.iter().collect();
         categories.sort_by(|a, b| category_cmp(a, b));
         categories.dedup();
         for category in categories {
             entry_map
-                .entry(category)
+                .entry(category.clone())
                 .or_insert(Vec::new())
                 .push(entry.clone());
         }
