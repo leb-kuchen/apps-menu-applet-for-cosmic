@@ -404,7 +404,7 @@ fn entry_map(
     let mut entry_map = HashMap::with_capacity(entries.len());
     for entry in &entries {
         let mut categories = entry.categories.clone();
-        categories.sort_by(|a, b| natural_lexical_cmp(&a, &b));
+        categories.sort_by(|a, b| category_cmp(a, b));
         categories.dedup();
         for category in categories {
             entry_map
