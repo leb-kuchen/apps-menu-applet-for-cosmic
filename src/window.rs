@@ -1,6 +1,8 @@
 #![allow(clippy::needless_return)]
 
+use crate::config::{AppListConfig, Config, CONFIG_VERSION};
 use cosmic::app::Core;
+use cosmic::cosmic_config;
 use cosmic::cosmic_theme::Spacing;
 use cosmic::iced::wayland::popup::{destroy_popup, get_popup};
 use cosmic::iced::window::Id;
@@ -13,11 +15,9 @@ use cosmic::iced_style::application;
 use cosmic::{widget, Apply};
 use cosmic::{Element, Theme};
 use freedesktop_desktop_entry::DesktopEntry;
+use lexical_sort::natural_lexical_cmp;
 use notify::Watcher;
 use tokio::task::spawn_blocking;
-
-use crate::config::{AppListConfig, Config, CONFIG_VERSION};
-use cosmic::cosmic_config;
 
 use crate::mouse_area_copy;
 
@@ -27,7 +27,10 @@ use cosmic::iced::Length;
 
 pub const ID: &str = "dev.dominiccgeh.CosmicAppletAppsMenu";
 
-// todo lexical sort
+// todo default scheama / config
+// todo proper way to set width
+// todo translations
+// todo autosize behavior
 
 pub struct Window {
     core: Core,
@@ -81,16 +84,15 @@ impl cosmic::Application for Window {
         flags: Self::Flags,
     ) -> (Self, Command<cosmic::app::Message<Self::Message>>) {
         let mut config = flags.config;
-        // custom sort function great opportunity to introduce lexical sort
         if config.sort_categories {
-            config.categories.sort();
+            config.categories.sort_by(|a, b| category_cmp(a, b));
         }
         let entry_map = entry_map(
             entries(&config),
             flags.app_list_config.favorites.clone(),
             &config,
         );
-        dbg!(&config);
+        // dbg!(&config);
         let window = Window {
             core,
             config,
@@ -138,7 +140,7 @@ impl cosmic::Application for Window {
                 if config != self.config {
                     self.config = config.clone();
                     if self.config.sort_categories {
-                        self.config.categories.sort();
+                        self.config.categories.sort_by(|a, b| category_cmp(a, b));
                     }
                     let favorites = self.app_list_config.favorites.clone();
                     return update_entry_map(favorites, config);
@@ -175,6 +177,9 @@ impl cosmic::Application for Window {
             }
             Message::SpawnExec(exec) => {
                 cosmic::desktop::spawn_desktop_exec(exec, Vec::<(&str, &str)>::new());
+                if let Some(p) = self.popup.take() {
+                    return destroy_popup(p);
+                };
             }
             Message::AppListConfg(config) => {
                 if config != self.app_list_config {
@@ -377,8 +382,8 @@ fn update_entry_map(
     );
 }
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+use std::{cmp, fs};
 impl Window {}
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
@@ -395,11 +400,11 @@ fn entry_map(
     favorites: Vec<String>,
     config: &Config,
 ) -> HashMap<String, Vec<Entry>> {
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.sort_by(|a, b| natural_lexical_cmp(&a.name, &b.name));
     let mut entry_map = HashMap::with_capacity(entries.len());
     for entry in &entries {
         let mut categories = entry.categories.clone();
-        categories.sort();
+        categories.sort_by(|a, b| natural_lexical_cmp(&a, &b));
         categories.dedup();
         for category in categories {
             entry_map
@@ -420,7 +425,7 @@ fn entry_map(
     entry_map
         .entry("Favorites".into())
         .or_insert(Vec::new())
-        .sort_by(|a, b| a.name.cmp(&b.name));
+        .sort_by(|a, b| natural_lexical_cmp(&a.name, &b.name));
 
     let other = entry_map.get("Other");
     if let Some(other) = other {
@@ -430,7 +435,10 @@ fn entry_map(
                 !entry_map
                     .iter()
                     .filter(|(k, _)| *k != "Other")
-                    .any(|(_, v)| v.binary_search_by(|a| a.name.cmp(&entry.name)).is_ok())
+                    .any(|(_, v)| {
+                        v.binary_search_by(|a| natural_lexical_cmp(&a.name, &entry.name))
+                            .is_ok()
+                    })
             })
             .cloned()
             .collect();
@@ -456,6 +464,18 @@ fn entries(config: &Config) -> Vec<Entry> {
 // todo first need to find out to set proper width
 // use options instead, but definity check favorites when parsing, so it is definity shown
 
+fn category_cmp(a: &str, b: &str) -> cmp::Ordering {
+    // favorites top - other bottom
+    return match (a, b) {
+        ("Favorites", "Favorites") | ("Other", "Other") => cmp::Ordering::Equal,
+        ("Favorites", _) => cmp::Ordering::Less,
+        (_, "Favorites") => cmp::Ordering::Greater,
+        ("Other", _) => cmp::Ordering::Greater,
+        (_, "Other") => cmp::Ordering::Less,
+        _ => natural_lexical_cmp(a, b),
+    };
+}
+
 fn parse_entry(path: &Path, config: &Config) -> Option<Entry> {
     let bytes = fs::read_to_string(path).ok()?;
     let desktop_entry = DesktopEntry::decode(path, &bytes).ok()?;
@@ -464,10 +484,10 @@ fn parse_entry(path: &Path, config: &Config) -> Option<Entry> {
     let exec = desktop_entry.exec()?.to_string();
     let icon = desktop_entry.icon()?.to_string();
     let appid = desktop_entry.appid.to_string();
-    dbg!(desktop_entry
-        .categories()?
-        .split_terminator(";")
-        .collect::<Vec<_>>());
+    // dbg!(desktop_entry
+    //     .categories()?
+    //     .split_terminator(";")
+    //     .collect::<Vec<_>>());
 
     // favorites without a category
     // behavior of gnome extension: custom not any other
@@ -476,6 +496,7 @@ fn parse_entry(path: &Path, config: &Config) -> Option<Entry> {
         // make it an enum?
         // for now just filter it out
         if !config.categories.iter().any(|c| c == category) {
+            // dbg!(category);
             category = "Other";
         };
         categories.push(category.to_string());
@@ -489,6 +510,6 @@ fn parse_entry(path: &Path, config: &Config) -> Option<Entry> {
         exec,
         icon,
     };
-    dbg!(&entry);
+    // dbg!(&entry);
     Some(entry)
 }
