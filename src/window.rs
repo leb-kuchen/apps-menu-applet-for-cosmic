@@ -12,6 +12,7 @@ use cosmic::iced_futures::futures::SinkExt;
 use cosmic::iced_futures::Subscription;
 use cosmic::iced_runtime::core::window;
 use cosmic::iced_style::application;
+use cosmic::widget::Widget;
 use cosmic::{widget, Apply};
 use cosmic::{Element, Theme};
 use freedesktop_desktop_entry::DesktopEntry;
@@ -27,7 +28,10 @@ use cosmic::iced::Length;
 
 pub const ID: &str = "dev.dominiccgeh.CosmicAppletAppsMenu";
 
-// todo default scheama / config
+// todo default scheama / config / Readme
+// todo Other / Favorites const
+// todo is -other / favorites check ( save memory)
+// todo case insensitive categories
 // todo proper way to set width
 // todo translations
 // todo autosize behavior
@@ -221,33 +225,44 @@ impl cosmic::Application for Window {
         let mut content_list = widget::column::with_capacity(1).padding([8, 0]);
         let mut rows = widget::row::with_capacity(2);
         let Config { categories, .. } = &self.config;
-        let mut left_side = widget::column::with_capacity(categories.len());
+        let mut left_side = widget::grid().row_spacing(0);
 
-        // todo proper way to uniform width (try spaming more containers?)
-        let max_width = categories
-            .iter()
-            .map(|category| category.graphemes(true).count())
-            .max()
-            .unwrap_or(0) as f32
-            * 10.0;
+        // HACK: determine the largest item and do not set the width to Fill
+        // alternative might be a mouse area which return the bounds of the widget
+        // uniform widget ( so it would net to implement into width for self, and then you get the layout bounds?
 
+        let mut max_width = 0;
+        let mut max_category = None;
+        for category in categories {
+            if self.config.skip_empty_categories && !self.entry_map.contains_key(category) {
+                continue;
+            }
+            let count = unicode_display_width::width(&category);
+            if count > max_width {
+                max_width = count;
+                max_category = Some(category);
+            }
+        }
+        dbg!(&max_category);
         for category in categories {
             if self.config.skip_empty_categories && !self.entry_map.contains_key(category) {
                 continue;
             }
             let txt = widget::text(category)
-                .width(max_width)
                 .apply(widget::container)
                 .padding([0, space_xxxs]);
 
-            let btn = widget::button(txt)
+            let mut btn = widget::button(txt)
                 .on_press(Message::Category(category.clone()))
                 .selected(self.active_category == *category)
                 .style(cosmic::theme::Button::HeaderBar);
 
+            if max_category.map_or(true, |max| max != category) {
+                btn = btn.width(Length::Fill);
+            }
             let area = mouse_area_copy::MouseArea::new(btn)
                 .on_mouse_hover(Message::Category(category.clone()));
-            left_side = left_side.push(area);
+            left_side = left_side.push(area).insert_row();
         }
         let empty_vec = Vec::new();
         let active_entries = self
@@ -273,7 +288,6 @@ impl cosmic::Application for Window {
             right_side = right_side.push(container);
         }
         let right_scroll = widget::scrollable(right_side).height(500);
-        use unicode_segmentation::UnicodeSegmentation;
 
         let left_container = widget::container(left_side).width(Length::Shrink);
         let right_container = widget::container(right_scroll).width(Length::Fill);
@@ -444,7 +458,9 @@ fn entry_map(
     if config.skip_empty_categories {
         entry_map.retain(|_, v| !v.is_empty());
     }
+    // optimize as updates are performed rarely
     entry_map.shrink_to_fit();
+    entry_map.values_mut().for_each(|e| e.shrink_to_fit());
     entry_map
 }
 
