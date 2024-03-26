@@ -9,7 +9,7 @@ sudo just install
 
 # Config
 
-Configuration Directory: `.config/cosmic/dev.dominiccgeh.CosmicAppletAppsMenu/`
+The configuration directory is `.config/cosmic/dev.dominiccgeh.CosmicAppletAppsMenu/`.
 
 Each configuration option coresponds to a filename, e.g. you can set `skip_empty_categories` with `true > .config/cosmic/dev.dominiccgeh.CosmicAppletAppsMenu/skip_empty_categories`.
 
@@ -35,3 +35,6 @@ categories: [
 ],
 sort_categories: true,
 ```
+
+Note that, categories are case-sensitive and `Favorites` and `Other` are not
+acutally categories in your desktop files.
