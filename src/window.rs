@@ -1,4 +1,8 @@
+#![allow(clippy::needless_return)]
+
+use crate::config::{AppListConfig, Config, CONFIG_VERSION};
 use cosmic::app::Core;
+use cosmic::cosmic_config;
 use cosmic::cosmic_theme::Spacing;
 use cosmic::iced::wayland::popup::{destroy_popup, get_popup};
 use cosmic::iced::window::Id;
@@ -11,11 +15,9 @@ use cosmic::iced_style::application;
 use cosmic::{widget, Apply};
 use cosmic::{Element, Theme};
 use freedesktop_desktop_entry::DesktopEntry;
+use lexical_sort::natural_lexical_cmp;
 use notify::Watcher;
 use tokio::task::spawn_blocking;
-
-use crate::config::{AppListConfig, Config, CONFIG_VERSION};
-use cosmic::cosmic_config;
 
 use crate::mouse_area_copy;
 
@@ -25,6 +27,15 @@ use cosmic::iced::Length;
 
 pub const ID: &str = "dev.dominiccgeh.CosmicAppletAppsMenu";
 
+// todo default scheama / config / Readme
+// todo translations
+// todo case insensitive categories
+// todo Other / Favorites const
+// todo is -other / favorites check ( save memory)
+
+// todo autosize behavior
+// todo proper way to set width
+
 pub struct Window {
     core: Core,
     popup: Option<Id>,
@@ -33,9 +44,9 @@ pub struct Window {
     app_list_config: AppListConfig,
     #[allow(dead_code)]
     config_handler: Option<cosmic_config::Config>,
-    active_category: Category,
+    active_category: String,
     timeline: Timeline,
-    entry_map: HashMap<Category, Vec<Entry>>,
+    entry_map: HashMap<String, Vec<Entry>>,
 }
 
 #[derive(Clone, Debug)]
@@ -44,11 +55,11 @@ pub enum Message {
     AppListConfg(AppListConfig),
     TogglePopup,
     PopupClosed(Id),
-    Category(Category),
+    Category(String),
     SpawnExec(String),
     Frame(std::time::Instant),
     NotifyEvent(notify::Event),
-    CategoryUpdate(Option<HashMap<Category, Vec<Entry>>>),
+    CategoryUpdate(Option<HashMap<String, Vec<Entry>>>),
 }
 
 #[derive(Clone, Debug)]
@@ -76,18 +87,24 @@ impl cosmic::Application for Window {
         core: Core,
         flags: Self::Flags,
     ) -> (Self, Command<cosmic::app::Message<Self::Message>>) {
-        let entry_map = entry_map(entries(), flags.app_list_config.favorites.clone());
+        let mut config = flags.config;
+        if config.sort_categories {
+            config.categories.sort_by(|a, b| category_cmp(a, b));
+        }
+        let favorites = flags.app_list_config.favorites.clone();
+        let entry_map = HashMap::new();
+        // dbg!(&config);
         let window = Window {
             core,
-            config: flags.config,
+            config: config.clone(),
             config_handler: flags.config_handler,
-            active_category: Category::Favorites,
+            active_category: "Favorites".into(),
             popup: None,
             app_list_config: flags.app_list_config,
             entry_map,
             timeline: Timeline::new(),
         };
-        (window, Command::none())
+        (window, update_entry_map(favorites, config))
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -122,7 +139,12 @@ impl cosmic::Application for Window {
         match message {
             Message::Config(config) => {
                 if config != self.config {
-                    self.config = config
+                    self.config = config.clone();
+                    if self.config.sort_categories {
+                        self.config.categories.sort_by(|a, b| category_cmp(a, b));
+                    }
+                    let favorites = self.app_list_config.favorites.clone();
+                    return update_entry_map(favorites, config);
                 }
             }
 
@@ -156,29 +178,22 @@ impl cosmic::Application for Window {
             }
             Message::SpawnExec(exec) => {
                 cosmic::desktop::spawn_desktop_exec(exec, Vec::<(&str, &str)>::new());
+                if let Some(p) = self.popup.take() {
+                    return destroy_popup(p);
+                };
             }
             Message::AppListConfg(config) => {
-                let favorites = config.favorites.clone();
-                self.app_list_config = config;
-                return Command::perform(
-                    async move {
-                        spawn_blocking(move || entry_map(entries(), favorites))
-                            .await
-                            .ok()
-                    },
-                    |entry_map| cosmic::app::message::app(Message::CategoryUpdate(entry_map)),
-                );
+                if config != self.app_list_config {
+                    let favorites = config.favorites.clone();
+                    self.app_list_config = config;
+                    let config = self.config.clone();
+                    return update_entry_map(favorites, config);
+                }
             }
             Message::NotifyEvent(_event) => {
                 let favorites = self.app_list_config.favorites.clone();
-                return Command::perform(
-                    async move {
-                        spawn_blocking(move || entry_map(entries(), favorites))
-                            .await
-                            .ok()
-                    },
-                    |entry_map| cosmic::app::message::app(Message::CategoryUpdate(entry_map)),
-                );
+                let config = self.config.clone();
+                return update_entry_map(favorites, config);
             }
             Message::CategoryUpdate(entry_map) => {
                 if let Some(entry_map) = entry_map {
@@ -209,39 +224,53 @@ impl cosmic::Application for Window {
 
         let mut content_list = widget::column::with_capacity(1).padding([8, 0]);
         let mut rows = widget::row::with_capacity(2);
+        let Config { categories, .. } = &self.config;
+        let mut left_side = widget::grid().row_spacing(0);
 
-        let mut left_side = widget::column::with_capacity(ALL_CATEGORIES.len());
-
-        // todo proper way to uniform width (try spaming more containers?)
-        let max_width = ALL_CATEGORIES
-            .iter()
-            .map(|category| format!("{:?}", category).graphemes(true).count())
-            .max()
-            .unwrap_or(0) as f32
-            * 10.0;
-
-        for category in ALL_CATEGORIES {
-            let txt = widget::text(format!("{category:?}"))
-                .width(max_width)
-                .apply(widget::container)
-                .padding([0, space_xxxs]);
-
-            let btn = widget::button(txt)
-                .on_press(Message::Category(*category))
-                .selected(self.active_category == *category)
-                .style(cosmic::theme::Button::HeaderBar);
-
-            let area =
-                mouse_area_copy::MouseArea::new(btn).on_mouse_hover(Message::Category(*category));
-            left_side = left_side.push(area);
-        }
         let empty_vec = Vec::new();
         let active_entries = self
             .entry_map
             .get(&self.active_category)
             .unwrap_or(&empty_vec);
 
-        let mut right_side = widget::column::with_capacity(active_entries.len()).width(400);
+        // HACK: determine the largest item and do not set the width to Fill
+        // alternative might be a mouse area which return the bounds of the widget
+        // uniform widget ( so it would net to implement into width for self, and then you get the layout bounds?
+
+        let mut max_width = 0;
+        let mut max_category = None;
+
+        for category in categories {
+            if self.config.skip_empty_categories && !self.entry_map.contains_key(category) {
+                continue;
+            }
+            let count = unicode_display_width::width(&category);
+            if count > max_width {
+                max_width = count;
+                max_category = Some(category);
+            }
+        }
+        for category in categories {
+            if self.config.skip_empty_categories && !self.entry_map.contains_key(category) {
+                continue;
+            }
+            let txt = widget::text(category)
+                .apply(widget::container)
+                .padding([0, space_xxxs]);
+
+            let mut btn = widget::button(txt)
+                .on_press(Message::Category(category.clone()))
+                .selected(self.active_category == *category)
+                .style(cosmic::theme::Button::HeaderBar);
+
+            if max_category.map_or(true, |max| max != category) {
+                btn = btn.width(Length::Fill)
+            }
+            let area = mouse_area_copy::MouseArea::new(btn)
+                .on_mouse_hover(Message::Category(category.clone()));
+            left_side = left_side.push(area).insert_row();
+        }
+        let mut right_side = widget::column::with_capacity(active_entries.len());
 
         for entry in active_entries {
             let txt = widget::text(entry.name.clone()).width(Length::Fill);
@@ -259,7 +288,6 @@ impl cosmic::Application for Window {
             right_side = right_side.push(container);
         }
         let right_scroll = widget::scrollable(right_side).height(500);
-        use unicode_segmentation::UnicodeSegmentation;
 
         let left_container = widget::container(left_side).width(Length::Shrink);
         let right_container = widget::container(right_scroll).width(Length::Fill);
@@ -350,123 +378,118 @@ impl cosmic::Application for Window {
         Some(cosmic::applet::style())
     }
 }
+
+fn update_entry_map(
+    favorites: Vec<String>,
+    config: Config,
+) -> Command<cosmic::app::Message<Message>> {
+    return Command::perform(
+        async move {
+            spawn_blocking(move || entry_map(entries(&config), favorites, &config))
+                .await
+                .ok()
+        },
+        |entry_map| cosmic::app::message::app(Message::CategoryUpdate(entry_map)),
+    );
+}
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+use std::{cmp, fs};
 impl Window {}
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Entry {
     name: String,
     exec: String,
-    categories: Vec<Category>,
+    categories: Vec<String>,
     icon: String,
     appid: String,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Category {
-    Favorites,
-    AudioVideo,
-    Audio,
-    Video,
-    Development,
-    Education,
-    Game,
-    Graphics,
-    Science,
-    Network,
-    Office,
-    System,
-    Utility,
-    Other,
-}
 
-const ALL_CATEGORIES: &'static [Category] = &[
-    Category::Favorites,
-    Category::AudioVideo,
-    Category::Audio,
-    Category::Video,
-    Category::Development,
-    Category::Education,
-    Category::Game,
-    Category::Graphics,
-    Category::Science,
-    Category::Network,
-    Category::Office,
-    Category::System,
-    Category::Utility,
-    Category::Other,
-];
-
-const _ALL_CATEGORIES_STR: &'static [&'static str] = &[
-    "Favorites",
-    "AudioVideo",
-    "Audio",
-    "Video",
-    "Development",
-    "Education",
-    "Game",
-    "Graphics",
-    "Science",
-    "Network",
-    "Office",
-    "System",
-    "Utility",
-];
-impl Category {
-    fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "AudioVideo" => Some(Category::AudioVideo),
-            "Audio" => Some(Category::Audio),
-            "Video" => Some(Category::Video),
-            "Development" => Some(Category::Development),
-            "Education" => Some(Category::Education),
-            "Game" => Some(Category::Game),
-            "Graphics" => Some(Category::Graphics),
-            "Science" => Some(Category::Science),
-            "Network" => Some(Category::Network),
-            "Office" => Some(Category::Office),
-            "System" => Some(Category::System),
-            "Utility" => Some(Category::Utility),
-            "" => None,
-            _ => Some(Category::Other),
-        }
-    }
-}
-
-fn entry_map(mut entries: Vec<Entry>, mut favorites: Vec<String>) -> HashMap<Category, Vec<Entry>> {
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+fn entry_map(
+    mut entries: Vec<Entry>,
+    favorites: Vec<String>,
+    config: &Config,
+) -> HashMap<String, Vec<Entry>> {
+    entries.sort_by(|a, b| natural_lexical_cmp(&a.name, &b.name));
     let mut entry_map = HashMap::with_capacity(entries.len());
     for entry in &entries {
-        let mut categories = entry.categories.clone();
-        categories.sort();
+        let mut categories: Vec<_> = entry.categories.iter().collect();
+        categories.sort_by(|a, b| category_cmp(a, b));
         categories.dedup();
         for category in categories {
             entry_map
-                .entry(category)
-                .or_insert_with(|| Vec::new())
+                .entry(category.clone())
+                .or_insert(Vec::new())
                 .push(entry.clone());
         }
     }
-    favorites.sort();
     for entry in favorites {
         if let Some(entry) = entries.iter().find(|it| it.appid == entry) {
             entry_map
-                .entry(Category::Favorites)
-                .or_insert_with(|| Vec::new())
+                .entry("Favorites".into())
+                .or_insert(Vec::new())
                 .push(entry.clone())
         }
     }
+    // what is going here, dbg the entry_map
+    entry_map
+        .entry("Favorites".into())
+        .or_insert(Vec::new())
+        .sort_by(|a, b| natural_lexical_cmp(&a.name, &b.name));
+
+    let other = entry_map.get("Other");
+    if let Some(other) = other {
+        let other: Vec<_> = other
+            .iter()
+            .filter(|entry| {
+                !entry_map
+                    .iter()
+                    .filter(|(k, _)| *k != "Other")
+                    .any(|(_, v)| {
+                        v.binary_search_by(|a| natural_lexical_cmp(&a.name, &entry.name))
+                            .is_ok()
+                    })
+            })
+            .cloned()
+            .collect();
+        entry_map.insert("Other".to_string(), other);
+    }
+    if config.skip_empty_categories {
+        entry_map.retain(|_, v| !v.is_empty());
+    }
+    // optimize as updates are performed rarely
+    entry_map.shrink_to_fit();
+    entry_map.values_mut().for_each(|e| e.shrink_to_fit());
     entry_map
 }
 
-fn entries() -> Vec<Entry> {
+fn entries(config: &Config) -> Vec<Entry> {
     use freedesktop_desktop_entry::{default_paths, Iter};
     Iter::new(default_paths())
-        .filter_map(|p| parse_entry(&p))
+        .filter_map(|p| parse_entry(&p, config))
         .collect()
 }
-fn parse_entry(path: &Path) -> Option<Entry> {
+// maybe fixed height?
+// the idea of a dropdown
+// then have a pregenerated schema
+// right to add to favorite
+// todo first need to find out to set proper width
+// use options instead, but definity check favorites when parsing, so it is definity shown
+
+fn category_cmp(a: &str, b: &str) -> cmp::Ordering {
+    // favorites top - other bottom
+    return match (a, b) {
+        ("Favorites", "Favorites") | ("Other", "Other") => cmp::Ordering::Equal,
+        ("Favorites", _) => cmp::Ordering::Less,
+        (_, "Favorites") => cmp::Ordering::Greater,
+        ("Other", _) => cmp::Ordering::Greater,
+        (_, "Other") => cmp::Ordering::Less,
+        _ => natural_lexical_cmp(a, b),
+    };
+}
+
+fn parse_entry(path: &Path, config: &Config) -> Option<Entry> {
     let bytes = fs::read_to_string(path).ok()?;
     let desktop_entry = DesktopEntry::decode(path, &bytes).ok()?;
     (!desktop_entry.no_display()).then_some(())?;
@@ -474,11 +497,23 @@ fn parse_entry(path: &Path) -> Option<Entry> {
     let exec = desktop_entry.exec()?.to_string();
     let icon = desktop_entry.icon()?.to_string();
     let appid = desktop_entry.appid.to_string();
-    let categories: Vec<_> = desktop_entry
-        .categories()?
-        .split(";")
-        .filter_map(Category::from_str)
-        .collect();
+    // dbg!(desktop_entry
+    //     .categories()?
+    //     .split_terminator(";")
+    //     .collect::<Vec<_>>());
+
+    // favorites without a category
+    // behavior of gnome extension: custom not any other
+    let mut categories = Vec::new();
+    for mut category in desktop_entry.categories()?.split_terminator(";") {
+        // make it an enum?
+        // for now just filter it out
+        if !config.categories.iter().any(|c| c == category) {
+            // dbg!(category);
+            category = "Other";
+        };
+        categories.push(category.to_string());
+    }
     (!categories.is_empty()).then_some(())?;
 
     let entry = Entry {
@@ -488,5 +523,6 @@ fn parse_entry(path: &Path) -> Option<Entry> {
         exec,
         icon,
     };
+    // dbg!(&entry);
     Some(entry)
 }
