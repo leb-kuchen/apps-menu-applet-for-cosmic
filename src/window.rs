@@ -223,7 +223,9 @@ impl cosmic::Application for Window {
     }
 
     fn view(&self) -> Element<Self::Message> {
+        let padding = self.core.applet.suggested_padding();
         widget::button(widget::text("Applications").size(14.0))
+            .padding([padding / 2, padding])
             .style(cosmic::theme::Button::AppletIcon)
             .on_press(Message::TogglePopup)
             .into()
