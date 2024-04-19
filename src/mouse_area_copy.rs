@@ -23,8 +23,9 @@ pub struct MouseArea<'a, Message, Theme = cosmic::Theme, Renderer = cosmic::iced
     on_right_release: Option<Message>,
     on_middle_press: Option<Message>,
     on_middle_release: Option<Message>,
-    on_mouse_wheel: Option<Box<dyn Fn(mouse::ScrollDelta) -> Message + 'a>>,
-    on_mouse_enter: Option<Message>,
+    on_enter: Option<Message>,
+    on_move: Option<Box<dyn Fn(Point) -> Message>>,
+    on_exit: Option<Message>,
 }
 
 impl<'a, Message, Theme, Renderer> MouseArea<'a, Message, Theme, Renderer> {
@@ -76,16 +77,27 @@ impl<'a, Message, Theme, Renderer> MouseArea<'a, Message, Theme, Renderer> {
         self.on_middle_release = Some(message);
         self
     }
+    /// The message to emit when the mouse enters the area.
     #[must_use]
-    /// The message to emit when the mouse wheel is released.
-    pub fn on_mouse_wheel(mut self, message: impl Fn(mouse::ScrollDelta) -> Message + 'a) -> Self {
-        self.on_mouse_wheel = Some(Box::new(message));
+    pub fn on_enter(mut self, message: Message) -> Self {
+        self.on_enter = Some(message);
         self
     }
+
+    /// The message to emit when the mouse moves in the area.
     #[must_use]
-    /// The message to emit when the area is hovered
-    pub fn on_mouse_hover(mut self, message: Message) -> Self {
-        self.on_mouse_enter = Some(message);
+    pub fn on_move<F>(mut self, build_message: F) -> Self
+    where
+        F: Fn(Point) -> Message + 'static,
+    {
+        self.on_move = Some(Box::new(build_message));
+        self
+    }
+
+    /// The message to emit when the mouse exits the area.
+    #[must_use]
+    pub fn on_exit(mut self, message: Message) -> Self {
+        self.on_exit = Some(message);
         self
     }
 }
@@ -93,7 +105,6 @@ impl<'a, Message, Theme, Renderer> MouseArea<'a, Message, Theme, Renderer> {
 /// Local state of the [`MouseArea`].
 #[derive(Default)]
 struct State {
-    // TODO: Support on_mouse_enter and on_mouse_exit
     drag_initiated: Option<Point>,
     is_hovered: bool,
 }
@@ -110,8 +121,9 @@ impl<'a, Message, Theme, Renderer> MouseArea<'a, Message, Theme, Renderer> {
             on_right_release: None,
             on_middle_press: None,
             on_middle_release: None,
-            on_mouse_wheel: None,
-            on_mouse_enter: None,
+            on_enter: None,
+            on_move: None,
+            on_exit: None,
         }
     }
 }
@@ -273,16 +285,30 @@ fn update<Message: Clone, Theme, Renderer>(
     shell: &mut Shell<'_, Message>,
     state: &mut State,
 ) -> event::Status {
-    if !cursor.is_over(layout.bounds()) {
-        if state.is_hovered {
-            if let Some(_) = widget.on_mouse_enter.as_ref() {
-                if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
-                    state.is_hovered = false;
-                    return event::Status::Captured;
+    if let Event::Mouse(mouse::Event::CursorMoved { .. })
+    | Event::Touch(touch::Event::FingerMoved { .. }) = event
+    {
+        let was_hovered = state.is_hovered;
+        state.is_hovered = cursor.is_over(layout.bounds());
+
+        match (
+            widget.on_enter.as_ref(),
+            widget.on_move.as_ref(),
+            widget.on_exit.as_ref(),
+        ) {
+            (Some(on_enter), _, _) if state.is_hovered && !was_hovered => {
+                shell.publish(on_enter.clone());
+            }
+            (_, Some(on_move), _) if state.is_hovered => {
+                if let Some(position) = cursor.position_in(layout.bounds()) {
+                    shell.publish(on_move(position));
                 }
             }
+            (_, _, Some(on_exit)) if !state.is_hovered && was_hovered => {
+                shell.publish(on_exit.clone());
+            }
+            _ => {}
         }
-        return event::Status::Ignored;
     }
 
     if let Some(message) = widget.on_press.as_ref() {
@@ -336,29 +362,6 @@ fn update<Message: Clone, Theme, Renderer>(
             shell.publish(message.clone());
 
             return event::Status::Captured;
-        }
-    }
-
-    if let Some(message) = widget.on_mouse_wheel.as_ref() {
-        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
-            // todo should scroll x and y be seperate functions or parameters?
-            // todo threshold, local state, parameter? (pixels laptop scroll)
-            if let mouse::ScrollDelta::Pixels { y, .. } = delta {
-                if y.abs() < 5. {
-                    return event::Status::Ignored;
-                }
-            }
-            shell.publish((message)(*delta));
-            return event::Status::Captured;
-        }
-    }
-    if let Some(message) = widget.on_mouse_enter.as_ref() {
-        if let Event::Mouse(mouse::Event::CursorMoved { .. }) = event {
-            if !state.is_hovered {
-                state.is_hovered = true;
-                shell.publish(message.clone());
-                return event::Status::Captured;
-            }
         }
     }
 

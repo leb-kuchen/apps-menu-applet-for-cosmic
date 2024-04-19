@@ -266,8 +266,8 @@ impl cosmic::Application for Window {
             if max_category.map_or(true, |max| max != category) {
                 btn = btn.width(Length::Fill)
             }
-            let area = mouse_area_copy::MouseArea::new(btn)
-                .on_mouse_hover(Message::Category(category.clone()));
+            let area =
+                mouse_area_copy::MouseArea::new(btn).on_enter(Message::Category(category.clone()));
             left_side = left_side.push(area).insert_row();
         }
         let mut right_side = widget::column::with_capacity(active_entries.len());
