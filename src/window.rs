@@ -40,7 +40,6 @@ pub const ID: &str = "dev.dominiccgeh.CosmicAppletAppsMenu";
 pub struct Window {
     core: Core,
     popup: Option<Id>,
-
     config: Config,
     app_list_config: AppListConfig,
     #[allow(dead_code)]
@@ -102,7 +101,7 @@ impl cosmic::Application for Window {
             core,
             config: config.clone(),
             config_handler: flags.config_handler,
-            active_category: "Favorites".into(),
+            active_category: config.categories.first().cloned().unwrap_or(String::new()),
             popup: None,
             app_list_config: flags.app_list_config,
             entry_map,
@@ -211,6 +210,8 @@ impl cosmic::Application for Window {
             Message::CategoryUpdate(entry_map) => {
                 if let Some(entry_map) = entry_map {
                     self.entry_map = entry_map;
+                    self.scroll_views
+                        .retain(|k, _| self.entry_map.contains_key(k));
                 }
             }
             Message::Scroll(viewport) => {
