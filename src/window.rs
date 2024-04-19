@@ -12,6 +12,7 @@ use cosmic::iced_futures::futures::SinkExt;
 use cosmic::iced_futures::Subscription;
 use cosmic::iced_runtime::core::window;
 use cosmic::iced_style::application;
+use cosmic::iced_widget::scrollable;
 use cosmic::{widget, Apply};
 use cosmic::{Element, Theme};
 use freedesktop_desktop_entry::DesktopEntry;
@@ -39,7 +40,6 @@ pub const ID: &str = "dev.dominiccgeh.CosmicAppletAppsMenu";
 pub struct Window {
     core: Core,
     popup: Option<Id>,
-
     config: Config,
     app_list_config: AppListConfig,
     #[allow(dead_code)]
@@ -47,6 +47,8 @@ pub struct Window {
     active_category: String,
     timeline: Timeline,
     entry_map: HashMap<String, Vec<Entry>>,
+    scrollable_id: widget::Id,
+    scroll_views: HashMap<String, scrollable::Viewport>,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +61,7 @@ pub enum Message {
     SpawnExec(String),
     Frame(std::time::Instant),
     NotifyEvent(notify::Event),
+    Scroll(scrollable::Viewport),
     CategoryUpdate(Option<HashMap<String, Vec<Entry>>>),
 }
 
@@ -98,11 +101,13 @@ impl cosmic::Application for Window {
             core,
             config: config.clone(),
             config_handler: flags.config_handler,
-            active_category: "Favorites".into(),
+            active_category: config.categories.first().cloned().unwrap_or(String::new()),
             popup: None,
             app_list_config: flags.app_list_config,
             entry_map,
             timeline: Timeline::new(),
+            scrollable_id: widget::Id::unique(),
+            scroll_views: HashMap::new(),
         };
         (window, update_entry_map(favorites, config))
     }
@@ -175,6 +180,13 @@ impl cosmic::Application for Window {
             }
             Message::Category(category) => {
                 self.active_category = category;
+                return scrollable::scroll_to(
+                    self.scrollable_id.clone(),
+                    match self.scroll_views.get(&self.active_category) {
+                        Some(viewport) => viewport.absolute_offset(),
+                        None => scrollable::AbsoluteOffset::default(),
+                    },
+                );
             }
             Message::SpawnExec(exec) => {
                 cosmic::desktop::spawn_desktop_exec(exec, Vec::<(&str, &str)>::new());
@@ -198,14 +210,23 @@ impl cosmic::Application for Window {
             Message::CategoryUpdate(entry_map) => {
                 if let Some(entry_map) = entry_map {
                     self.entry_map = entry_map;
+                    self.scroll_views
+                        .retain(|k, _| self.entry_map.contains_key(k));
                 }
+            }
+            Message::Scroll(viewport) => {
+                // String leak?
+                self.scroll_views
+                    .insert(self.active_category.clone(), viewport);
             }
         }
         Command::none()
     }
 
     fn view(&self) -> Element<Self::Message> {
-        cosmic::widget::button(widget::text("Applications").size(14.0))
+        let padding = self.core.applet.suggested_padding();
+        widget::button(widget::text("Applications").size(14.0))
+            .padding([padding / 2, padding])
             .style(cosmic::theme::Button::AppletIcon)
             .on_press(Message::TogglePopup)
             .into()
@@ -266,8 +287,8 @@ impl cosmic::Application for Window {
             if max_category.map_or(true, |max| max != category) {
                 btn = btn.width(Length::Fill)
             }
-            let area = mouse_area_copy::MouseArea::new(btn)
-                .on_mouse_hover(Message::Category(category.clone()));
+            let area =
+                mouse_area_copy::MouseArea::new(btn).on_enter(Message::Category(category.clone()));
             left_side = left_side.push(area).insert_row();
         }
         let mut right_side = widget::column::with_capacity(active_entries.len());
@@ -287,7 +308,10 @@ impl cosmic::Application for Window {
             let container = widget::container(btn).width(Length::Fill);
             right_side = right_side.push(container);
         }
-        let right_scroll = widget::scrollable(right_side).height(500);
+        let right_scroll = widget::scrollable(right_side)
+            .height(500)
+            .id(self.scrollable_id.clone())
+            .on_scroll(Message::Scroll);
 
         let left_container = widget::container(left_side).width(Length::Shrink);
         let right_container = widget::container(right_scroll).width(Length::Fill);
