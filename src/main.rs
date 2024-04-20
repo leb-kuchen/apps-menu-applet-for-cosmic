@@ -5,6 +5,7 @@ use cosmic::cosmic_config;
 use cosmic::cosmic_config::CosmicConfigEntry;
 mod config;
 mod mouse_area_copy;
+mod icon_cache;
 use window::Flags;
 
 mod localize;

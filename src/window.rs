@@ -1,6 +1,7 @@
 #![allow(clippy::needless_return)]
 
 use crate::config::{AppListConfig, Config, CONFIG_VERSION};
+use crate::icon_cache::{icon_cache_handle, icon_cache_icon, precache_icons};
 use cosmic::app::Core;
 use cosmic::cosmic_config;
 use cosmic::cosmic_theme::Spacing;
@@ -18,7 +19,7 @@ use cosmic::{Element, Theme};
 use freedesktop_desktop_entry::DesktopEntry;
 use lexical_sort::natural_lexical_cmp;
 use notify::Watcher;
-use tokio::task::spawn_blocking;
+use tokio::task::{block_in_place, spawn_blocking};
 
 use crate::mouse_area_copy;
 
@@ -109,7 +110,7 @@ impl cosmic::Application for Window {
             scrollable_id: widget::Id::unique(),
             scroll_views: HashMap::new(),
         };
-        (window, update_entry_map(favorites, config))
+        (window, precache_entry_map(favorites, config))
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -179,6 +180,10 @@ impl cosmic::Application for Window {
                 }
             }
             Message::Category(category) => {
+                if self.active_category == category {
+                    return Command::none();
+                }
+                self.scroll_views.remove(&category);
                 self.active_category = category;
                 return scrollable::scroll_to(
                     self.scrollable_id.clone(),
@@ -296,7 +301,7 @@ impl cosmic::Application for Window {
         for entry in active_entries {
             let txt = widget::text(entry.name.clone()).width(Length::Fill);
 
-            let icon = widget::icon::from_name(entry.icon.clone()).size(20);
+            let icon = icon_cache_icon(entry.icon.clone(), 20);
             let row = widget::row::with_capacity(2)
                 .push(icon)
                 .push(txt)
@@ -416,7 +421,31 @@ fn update_entry_map(
         |entry_map| cosmic::app::message::app(Message::CategoryUpdate(entry_map)),
     );
 }
-use std::collections::HashMap;
+
+fn precache_entry_map(
+    favorites: Vec<String>,
+    config: Config,
+) -> Command<cosmic::app::Message<Message>> {
+    return Command::perform(
+        async move {
+            // Icon is not send
+            block_in_place(move || {
+                let entries = entry_map(entries(&config), favorites, &config);
+
+                // do not need the ordering, but DesktopEntryData does not implement hash
+                // could use a wrapper type and impl Hash and Eq based on the icon
+                for entry in entries.values().flatten().collect::<BTreeSet<_>>() {
+                    // do not need the icon, but generate it, so the underlying data can be pre cached
+                    _ = icon_cache_icon(entry.icon.clone(), 20)
+                }
+                entries
+            })
+        },
+        |entry_map| cosmic::app::message::app(Message::CategoryUpdate(Some(entry_map))),
+    );
+}
+
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::{cmp, fs};
 impl Window {}
