@@ -224,10 +224,9 @@ impl cosmic::Application for Window {
     }
 
     fn view(&self) -> Element<Self::Message> {
-        let padding = self.core.applet.suggested_padding();
-        widget::button(widget::text("Applications").size(14.0))
-            .padding([padding / 2, padding])
-            .style(cosmic::theme::Button::AppletIcon)
+        self.core
+            .applet
+            .icon_button(ID)
             .on_press(Message::TogglePopup)
             .into()
     }
@@ -271,6 +270,7 @@ impl cosmic::Application for Window {
                 max_category = Some(category);
             }
         }
+        // todo replace with segmented button?
         for category in categories {
             if self.config.skip_empty_categories && !self.entry_map.contains_key(category) {
                 continue;
