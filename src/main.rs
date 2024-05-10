@@ -51,5 +51,5 @@ fn main() -> cosmic::iced::Result {
         config,
         app_list_config,
     };
-    cosmic::applet::run::<Window>(true, flags)
+    cosmic::applet::run::<Window>(false, flags)
 }
