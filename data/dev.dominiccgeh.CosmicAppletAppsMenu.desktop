@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Cosmic Applet Apps Menu
+Name=Apps Menu
 Comment=A category-based menu for apps.
 Type=Application
 Exec=cosmic-applet-apps-menu
@@ -7,7 +7,8 @@ Terminal=false
 Categories=Cosmic;Iced;
 Keywords=Cosmic;Iced;
 # Translators: Do NOT translate or transliterate this text (this is an icon file name)!
-Icon=dev.dominiccgeh.CosmicAppletAppsMenu
+Icon=dev.dominiccgeh.CosmicAppletAppsMenu-symbolic
 StartupNotify=true
 NoDisplay=true
 X-CosmicApplet=true
+X-CosmicHoverPopup=true
