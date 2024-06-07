@@ -49,7 +49,6 @@ pub struct Window {
     timeline: Timeline,
     entry_map: HashMap<String, Vec<Entry>>,
     scrollable_id: widget::Id,
-    scroll_views: HashMap<String, scrollable::Viewport>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +61,6 @@ pub enum Message {
     SpawnExec(String),
     Frame(std::time::Instant),
     NotifyEvent(notify::Event),
-    Scroll(scrollable::Viewport),
     CategoryUpdate(Option<HashMap<String, Vec<Entry>>>),
 }
 
@@ -108,7 +106,6 @@ impl cosmic::Application for Window {
             entry_map,
             timeline: Timeline::new(),
             scrollable_id: widget::Id::unique(),
-            scroll_views: HashMap::new(),
         };
         (window, update_entry_map(favorites, config))
     }
@@ -180,13 +177,13 @@ impl cosmic::Application for Window {
                 }
             }
             Message::Category(category) => {
+                if category == self.active_category {
+                    return Command::none();
+                }
                 self.active_category = category;
                 return scrollable::scroll_to(
                     self.scrollable_id.clone(),
-                    match self.scroll_views.get(&self.active_category) {
-                        Some(viewport) => viewport.absolute_offset(),
-                        None => scrollable::AbsoluteOffset::default(),
-                    },
+                    scrollable::AbsoluteOffset::default(),
                 );
             }
             Message::SpawnExec(exec) => {
@@ -211,14 +208,7 @@ impl cosmic::Application for Window {
             Message::CategoryUpdate(entry_map) => {
                 if let Some(entry_map) = entry_map {
                     self.entry_map = entry_map;
-                    self.scroll_views
-                        .retain(|k, _| self.entry_map.contains_key(k));
                 }
-            }
-            Message::Scroll(viewport) => {
-                // String leak?
-                self.scroll_views
-                    .insert(self.active_category.clone(), viewport);
             }
         }
         Command::none()
@@ -311,8 +301,7 @@ impl cosmic::Application for Window {
         }
         let right_scroll = widget::scrollable(right_side)
             .height(500)
-            .id(self.scrollable_id.clone())
-            .on_scroll(Message::Scroll);
+            .id(self.scrollable_id.clone());
 
         let left_container = widget::container(left_side).width(Length::Shrink);
         let right_container = widget::container(right_scroll).width(Length::Fill);
@@ -515,7 +504,7 @@ fn category_cmp(a: &str, b: &str) -> cmp::Ordering {
         _ => natural_lexical_cmp(a, b),
     };
 }
-
+// if parsing fails, favorites are not shown
 fn parse_entry(path: &Path, config: &Config, locales: &[String]) -> Option<Entry> {
     let bytes = fs::read_to_string(path).ok()?;
     let desktop_entry = DesktopEntry::from_str(path, &bytes, locales).ok()?;
