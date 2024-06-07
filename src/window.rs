@@ -507,10 +507,11 @@ fn parse_entry(path: &Path, config: &Config, locales: &[String]) -> Option<Entry
     let appid = desktop_entry.appid.to_string();
     let mut categories = Vec::new();
     for mut category in desktop_entry.categories()?.split_terminator(";") {
+        let category_lowercase = category.to_lowercase();
         category = if let Some(config_category) = config
             .categories
             .iter()
-            .find(|c| c.to_lowercase() == category.to_lowercase())
+            .find(|c| c.to_lowercase() == category_lowercase.as_str())
         {
             &config_category
         } else {
