@@ -36,7 +36,7 @@ categories: [
 sort_categories: true,
 ```
 
-Note that, categories are case-sensitive and `Favorites` and `Other` are not
+Note that Favorites` and `Other` are not
 acutally categories in your desktop files.
 
 # Dependencies

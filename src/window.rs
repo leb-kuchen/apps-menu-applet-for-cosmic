@@ -29,14 +29,7 @@ use cosmic::iced::Length;
 
 pub const ID: &str = "dev.dominiccgeh.CosmicAppletAppsMenu";
 
-// todo default scheama / config / Readme
-// todo translations
 // todo case insensitive categories
-// todo Other / Favorites const
-// todo is -other / favorites check ( save memory)
-
-// todo autosize behavior
-// todo proper way to set width
 
 pub struct Window {
     core: Core,
@@ -95,7 +88,6 @@ impl cosmic::Application for Window {
         }
         let favorites = flags.app_list_config.favorites.clone();
         let entry_map = HashMap::new();
-        // dbg!(&config);
         let window = Window {
             core,
             config: config.clone(),
@@ -261,7 +253,6 @@ impl cosmic::Application for Window {
                 max_category = Some(category);
             }
         }
-        // todo replace with segmented button?
         for category in categories {
             if self.config.skip_empty_categories && !self.entry_map.contains_key(category) {
                 continue;
@@ -276,7 +267,7 @@ impl cosmic::Application for Window {
                 .style(cosmic::theme::Button::HeaderBar);
 
             if max_category.map_or(true, |max| max != category) {
-                btn = btn.width(Length::Fill)
+                btn = btn.width(Length::Fill);
             }
             let area =
                 mouse_area_copy::MouseArea::new(btn).on_enter(Message::Category(category.clone()));
@@ -406,6 +397,7 @@ fn update_entry_map(
         |entry_map| cosmic::app::message::app(Message::CategoryUpdate(entry_map)),
     );
 }
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::{cmp, fs};
@@ -438,6 +430,7 @@ fn entry_map(
                 .push(entry.clone());
         }
     }
+    // todo only works if entry is present
     for entry in favorites {
         if let Some(entry) = entries.iter().find(|it| it.appid == entry) {
             entry_map
@@ -446,7 +439,6 @@ fn entry_map(
                 .push(entry.clone())
         }
     }
-    // what is going here, dbg the entry_map
     entry_map
         .entry("Favorites".into())
         .or_insert(Vec::new())
@@ -472,7 +464,6 @@ fn entry_map(
     if config.skip_empty_categories {
         entry_map.retain(|_, v| !v.is_empty());
     }
-    // optimize as updates are performed rarely
     entry_map.shrink_to_fit();
     entry_map.values_mut().for_each(|e| e.shrink_to_fit());
     entry_map
@@ -486,12 +477,6 @@ fn entries(config: &Config) -> Vec<Entry> {
         .filter_map(|p| parse_entry(&p, config, &locales))
         .collect()
 }
-// maybe fixed height?
-// the idea of a dropdown
-// then have a pregenerated schema
-// right to add to favorite
-// todo first need to find out to set proper width
-// use options instead, but definity check favorites when parsing, so it is definity shown
 
 fn category_cmp(a: &str, b: &str) -> cmp::Ordering {
     // favorites top - other bottom
@@ -504,7 +489,6 @@ fn category_cmp(a: &str, b: &str) -> cmp::Ordering {
         _ => natural_lexical_cmp(a, b),
     };
 }
-// if parsing fails, favorites are not shown
 fn parse_entry(path: &Path, config: &Config, locales: &[String]) -> Option<Entry> {
     let bytes = fs::read_to_string(path).ok()?;
     let desktop_entry = DesktopEntry::from_str(path, &bytes, locales).ok()?;
@@ -513,7 +497,7 @@ fn parse_entry(path: &Path, config: &Config, locales: &[String]) -> Option<Entry
 
     let name = desktop_entry
         .name(locales)
-        .unwrap_or_else(|| desktop_entry.appid.clone())
+        .unwrap_or_else(|| Cow::from(&*desktop_entry.appid))
         .to_string();
 
     let exec = desktop_entry.exec()?.to_string();
@@ -522,11 +506,15 @@ fn parse_entry(path: &Path, config: &Config, locales: &[String]) -> Option<Entry
     let icon = IconSource::from_unknown(icon);
     let appid = desktop_entry.appid.to_string();
     let mut categories = Vec::new();
-    // favorites without a category
     for mut category in desktop_entry.categories()?.split_terminator(";") {
-        //
-        if !config.categories.iter().any(|c| c == category) {
-            category = "Other";
+        category = if let Some(config_category) = config
+            .categories
+            .iter()
+            .find(|c| c.to_lowercase() == category.to_lowercase())
+        {
+            &config_category
+        } else {
+            "Other"
         };
         categories.push(category.to_string());
     }
