@@ -4,6 +4,7 @@ use crate::config::{AppListConfig, Config, CONFIG_VERSION};
 use cosmic::app::Core;
 use cosmic::cosmic_config;
 use cosmic::cosmic_theme::Spacing;
+use cosmic::desktop::IconSource;
 use cosmic::iced::wayland::popup::{destroy_popup, get_popup};
 use cosmic::iced::window::Id;
 use cosmic::iced::{self, Command, Limits};
@@ -296,7 +297,7 @@ impl cosmic::Application for Window {
         for entry in active_entries {
             let txt = widget::text(entry.name.clone()).width(Length::Fill);
 
-            let icon = widget::icon::from_name(entry.icon.clone()).size(20);
+            let icon = entry.icon.as_cosmic_icon().size(20);
             let row = widget::row::with_capacity(2)
                 .push(icon)
                 .push(txt)
@@ -421,12 +422,12 @@ use std::path::Path;
 use std::{cmp, fs};
 impl Window {}
 
-#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Entry {
     name: String,
     exec: String,
     categories: Vec<String>,
-    icon: String,
+    icon: IconSource,
     appid: String,
 }
 
@@ -489,9 +490,11 @@ fn entry_map(
 }
 
 fn entries(config: &Config) -> Vec<Entry> {
-    use freedesktop_desktop_entry::{default_paths, Iter};
+    use freedesktop_desktop_entry::{default_paths, get_languages_from_env, Iter};
+    let locales = get_languages_from_env();
+
     Iter::new(default_paths())
-        .filter_map(|p| parse_entry(&p, config))
+        .filter_map(|p| parse_entry(&p, config, &locales))
         .collect()
 }
 // maybe fixed height?
@@ -513,27 +516,27 @@ fn category_cmp(a: &str, b: &str) -> cmp::Ordering {
     };
 }
 
-fn parse_entry(path: &Path, config: &Config) -> Option<Entry> {
+fn parse_entry(path: &Path, config: &Config, locales: &[String]) -> Option<Entry> {
     let bytes = fs::read_to_string(path).ok()?;
-    let desktop_entry = DesktopEntry::decode(path, &bytes).ok()?;
-    (!desktop_entry.no_display()).then_some(())?;
-    let name = desktop_entry.name(None)?.to_string();
-    let exec = desktop_entry.exec()?.to_string();
-    let icon = desktop_entry.icon()?.to_string();
-    let appid = desktop_entry.appid.to_string();
-    // dbg!(desktop_entry
-    //     .categories()?
-    //     .split_terminator(";")
-    //     .collect::<Vec<_>>());
+    let desktop_entry = DesktopEntry::from_str(path, &bytes, locales).ok()?;
 
-    // favorites without a category
-    // behavior of gnome extension: custom not any other
+    (!desktop_entry.no_display()).then_some(())?;
+
+    let name = desktop_entry
+        .name(locales)
+        .unwrap_or_else(|| desktop_entry.appid.clone())
+        .to_string();
+
+    let exec = desktop_entry.exec()?.to_string();
+
+    let icon = desktop_entry.icon().unwrap_or(&desktop_entry.appid);
+    let icon = IconSource::from_unknown(icon);
+    let appid = desktop_entry.appid.to_string();
     let mut categories = Vec::new();
+    // favorites without a category
     for mut category in desktop_entry.categories()?.split_terminator(";") {
-        // make it an enum?
-        // for now just filter it out
+        //
         if !config.categories.iter().any(|c| c == category) {
-            // dbg!(category);
             category = "Other";
         };
         categories.push(category.to_string());
@@ -547,6 +550,5 @@ fn parse_entry(path: &Path, config: &Config) -> Option<Entry> {
         exec,
         icon,
     };
-    // dbg!(&entry);
     Some(entry)
 }
