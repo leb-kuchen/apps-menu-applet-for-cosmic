@@ -489,6 +489,7 @@ fn category_cmp(a: &str, b: &str) -> cmp::Ordering {
         _ => natural_lexical_cmp(a, b),
     };
 }
+
 fn parse_entry(path: &Path, config: &Config, locales: &[String]) -> Option<Entry> {
     let bytes = fs::read_to_string(path).ok()?;
     let desktop_entry = DesktopEntry::from_str(path, &bytes, locales).ok()?;
