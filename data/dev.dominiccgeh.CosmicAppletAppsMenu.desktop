@@ -2,7 +2,7 @@
 Name=Apps Menu
 Comment=A category-based menu for apps.
 Type=Application
-Exec=apps-menu-applet-for-cosmic_tm 
+Exec=cosmic-applet-apps-menu
 Terminal=false
 Categories=Cosmic;Iced;
 Keywords=Cosmic;Iced;
